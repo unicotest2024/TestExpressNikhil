@@ -1,0 +1,64 @@
+const db = require("../db");
+const redisClient = require("../redisClient");
+
+// Add new IP
+const addIPAddress = async (req, res) => {
+  const { ip, description } = req.body;
+
+  if (!ip) return res.status(400).json({ message: "IP is required" });
+
+  try {
+    // 1️⃣ Insert into MySQL
+    db.query(
+      "INSERT INTO ip_addresses (ip, description) VALUES (?, ?)",
+      [ip, description || null],
+      async (err) => {
+        if (err) {
+          console.error(err);
+          return res.status(500).json({ message: "Database insert error" });
+        }
+
+        // 2️⃣ Add to Redis cache
+        await redisClient.sAdd("allowed_ips", ip);
+        console.log(`✅ IP ${ip} added to DB and Redis cache`);
+        return res.status(201).json({ message: "IP added successfully" });
+      }
+    );
+  } catch (error) {
+    console.error("Add IP error:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// Update IP
+const updateIPAddress = async (req, res) => {
+  const { oldIP, newIP } = req.body;
+
+  if (!oldIP || !newIP) return res.status(400).json({ message: "Both oldIP and newIP are required" });
+
+  try {
+    // 1️⃣ Update in MySQL
+    db.query(
+      "UPDATE ip_addresses SET ip = ? WHERE ip = ?",
+      [newIP, oldIP],
+      async (err, result) => {
+        if (err) return res.status(500).json({ message: "Database update error" });
+
+        if (result.affectedRows === 0)
+          return res.status(404).json({ message: "Old IP not found" });
+
+        // 2️⃣ Update in Redis cache
+        await redisClient.sRem("allowed_ips", oldIP);
+        await redisClient.sAdd("allowed_ips", newIP);
+
+        console.log(`♻️ IP updated in DB and Redis: ${oldIP} → ${newIP}`);
+        res.status(200).json({ message: "IP updated successfully" });
+      }
+    );
+  } catch (error) {
+    console.error("Update IP error:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+module.exports = { addIPAddress, updateIPAddress };
